@@ -27,12 +27,8 @@ document.body.append(instance);
 const update = () => {
   instance.update({
     bar: 'basdfar',
-    hello: 'hello',
-    hidden: false,
     asdf: {b:2},
-    world: 12342,
-    a: 'a',
-    prop: ' FOO'
+    world: 12342
   })
 };
 
