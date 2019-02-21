@@ -1,58 +1,150 @@
-class TemplatePart{
-  constructor(node, expression){
+const expressionMatcher = /\{([\s\S]+?)\}/g;
+const executableExpression = /([\s\S]+?)\(([\s|\S]*?)\)/g;
+const nodeFilter = NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT;
+
+const partTypes = {
+  textNode: 1,
+  property: 2,
+  attribute: 3,
+  booleanAttribute: 4
+};
+
+class TemplatePart {
+  constructor(node, expression) {
     this._node = node;
-    this._expression = expression;
-    this._value = Symbol('uninitialized');
+    this._expression = createExpression(expression);
+    this._value = Symbol();
   }
-  update(context){
-    if(this._shouldUpdate(context)){
-      this._applyChanges(context[this._expression]);
+  update(context) {
+    if (this._expression.changed(context)) {
+      const value = this._cast(this._expression.getValue(context));
+      if (value !== this._value) {
+        this._value = value;
+        this._applyChanges(value);
+      }
     }
   }
-  _shouldUpdate(context) {
-    return (this._expression in context) && context[this._expression] !== this._value;
+  _cast(value) {
+    return value;
   }
-  _applyChanges(){
+  _applyChanges() {
     throw new Error('Not implemented');
   }
 }
 
-class NodePart extends TemplatePart{
-  constructor(node, { expression }){
-    super(node, expression);
+function createExpression(expression) {
+  const search = executableExpression.exec(expression);
+  if (!search) {
+    return new StaticExpression(expression);
   }
-  _applyChanges(value){
-    this._node.textContent = value || '';
+  const [, functionName, params] = search;
+  executableExpression.lastIndex = 0;
+  return new DynamicExpression(functionName.trim(), params.split(',').map(p=>p.trim()));
+}
+
+class StaticExpression {
+  constructor(expression) {
+    this._expression = expression;
+    this._value = Symbol();
+  }
+  changed(context) {
+    return this._expression in context && this._value !== context[this._expression];
+  }
+  getValue(context) {
+    const value = context[this._expression];
+    this._value = value;
+    return value;
   }
 }
 
-class BooleanAttributePart extends TemplatePart{
-  constructor(node, {expression, attribute}){
+class DynamicExpression {
+  constructor(functionName, params) {
+    this._functionName = functionName;
+    this._params = params;
+    this._function = Symbol();
+    this._paramsStore = this._initParamsStore();
+  }
+  _initParamsStore() {
+    return this._params.reduce((store, param) => {
+      store[param] = undefined;
+      return store;
+    }, {});
+  }
+  changed(context) {
+    return this._paramsChanged(context) || this._functionChanged(context);
+  }
+  _paramsChanged(context){
+    return this._params.some((key) => {
+      return key in context && this._paramsStore[key] !== context[key];
+    });
+  }
+  _functionChanged(context){
+    return this._functionName in context && this._function !== context[this._functionName];
+  }
+  getValue(context) {
+    this._updateParams(context);
+    this._updateFunction(context);
+    return this._function.apply(null, Object.values(this._paramsStore));
+  }
+  _updateParams(context) {
+    this._params.forEach((param) => {
+      this._paramsStore[param] = param in context
+        ? context[param]
+        : this._paramsStore[param];
+    });
+  }
+  _updateFunction(context) {
+    this._function = this._functionName in context
+      ? context[this._functionName]
+      : this._function;
+  }
+}
+
+class NodePart extends TemplatePart {
+  constructor(node, { expression }) {
+    super(node, expression);
+  }
+  _cast(value) {
+    return value || '';
+  }
+  _applyChanges(value) {
+    this._node.textContent = value;
+  }
+}
+
+class BooleanAttributePart extends TemplatePart {
+  constructor(node, { expression, attribute }) {
     super(node, expression);
     this._attribute = attribute;
   }
-  _applyChanges(value){
-    this._node.toggleAttribute(this._attribute, Boolean(value));
+  _cast(value) {
+    return Boolean(value);
+  }
+  _applyChanges(value) {
+    this._node.toggleAttribute(this._attribute, value);
   }
 }
 
-class PropertyPart extends TemplatePart{
-  constructor(node, {expression, property}){
+class PropertyPart extends TemplatePart {
+  constructor(node, { expression, property }) {
     super(node, expression);
     this._property = property;
   }
-  _applyChanges(value){
+  _applyChanges(value) {
     this._node[this._property] = value;
   }
 }
 
-class AttributePart extends TemplatePart{
-  constructor(node, {expression, attribute}){
+class AttributePart extends TemplatePart {
+  constructor(node, { expression, attribute }) {
     super(node, expression);
     this._attribute = attribute;
   }
-  _applyChanges(value){
-    this._node.setAttribute(this._attribute, value || '');
+  _cast(value) {
+    return value || '';
+  }
+  _applyChanges(value) {
+    this._node.setAttribute(this._attribute, value);
   }
 }
 
@@ -79,16 +171,6 @@ class TemplateInstance extends DocumentFragment {
     this._parts.forEach((part) => part.update(context));
   }
 }
-
-const expressionMatcher = /\{([\s\S]+?)\}/g;
-const nodeFilter = NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT;
-
-const partTypes = {
-  textNode: 1,
-  property: 2,
-  attribute: 3,
-  booleanAttribute: 4
-};
 
 const partConstructors = {
   [partTypes.textNode]: NodePart,
@@ -142,19 +224,19 @@ function parse(template) {
     parts[nodeIndex].push(part);
   }
 
-  function extractNodeBeforeExpression(offset){
+  function extractNodeBeforeExpression(offset) {
     node.splitText(offset);
     checkForEmptyNode();
   }
 
-  function extractExpressionNode(match, expression){
+  function extractExpressionNode(match, expression) {
     node = walker.nextNode();
     node.splitText(match.length);
     node.textContent = '';
     addPart({ type: partTypes.textNode, expression });
   }
 
-  function extractNodeAfterExpression(){
+  function extractNodeAfterExpression() {
     node = walker.nextNode();
     checkForEmptyNode();
   }

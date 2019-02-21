@@ -19,7 +19,8 @@ const ctx = {
   asdf: {a:1},
   world: 12,
   a: 'a',
-  prop: ' FOO'
+  prop: ' FOO',
+  func: (hello, world) => hello + ' ' + world
 };
 const instance = template.createInstance(ctx);
 document.body.append(instance);
